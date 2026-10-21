@@ -1,0 +1,144 @@
+@Watercolor.Api_HostAddress = http://localhost:5216
+
+GET {{Watercolor.Api_HostAddress}}/api/health
+Accept: application/json
+
+###
+
+# Kayıt ol (User rolüyle)
+POST {{Watercolor.Api_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Deneme Kullanıcı",
+  "email": "deneme@example.com",
+  "password": "Deneme123!"
+}
+
+###
+
+# Giriş yap; dönen token'ı aşağıdaki @token satırına yapıştır.
+# Admin şifresi için: dotnet user-secrets list
+POST {{Watercolor.Api_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@suluboya.local",
+  "password": "<admin-şifresi>"
+}
+
+###
+
+@token = <buraya-token>
+
+GET {{Watercolor.Api_HostAddress}}/api/auth/me
+Authorization: Bearer {{token}}
+
+###
+
+GET {{Watercolor.Api_HostAddress}}/api/artworks
+Accept: application/json
+
+###
+
+POST {{Watercolor.Api_HostAddress}}/api/artworks
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Boğaz'da Sabah",
+  "description": "Sisli bir sabahta Boğaz manzarası.",
+  "price": 2500,
+  "widthCm": 30,
+  "heightCm": 40,
+  "stock": 1
+}
+
+###
+
+GET {{Watercolor.Api_HostAddress}}/api/artworks/1
+Accept: application/json
+
+###
+
+PUT {{Watercolor.Api_HostAddress}}/api/artworks/1
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Boğaz'da Sabah",
+  "description": "Sisli bir sabahta Boğaz manzarası.",
+  "price": 2750,
+  "widthCm": 30,
+  "heightCm": 40,
+  "stock": 1
+}
+
+###
+
+DELETE {{Watercolor.Api_HostAddress}}/api/artworks/1
+Authorization: Bearer {{token}}
+
+###
+
+# Sipariş oluştur (giriş yapmış kullanıcı)
+POST {{Watercolor.Api_HostAddress}}/api/orders
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "items": [
+    { "artworkId": 2, "quantity": 1 }
+  ],
+  "shippingAddress": "Örnek Mah. Deneme Sok. No: 1, Kadıköy / İstanbul"
+}
+
+###
+
+# Kendi siparişlerim
+GET {{Watercolor.Api_HostAddress}}/api/orders
+Authorization: Bearer {{token}}
+
+###
+
+GET {{Watercolor.Api_HostAddress}}/api/orders/1
+Authorization: Bearer {{token}}
+
+###
+
+# Admin: tüm siparişler (filtre ve sayfalama isteğe bağlı)
+GET {{Watercolor.Api_HostAddress}}/api/admin/orders?status=Pending&page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+###
+
+# Admin: sipariş durumunu bir sonraki adıma ilerlet
+PATCH {{Watercolor.Api_HostAddress}}/api/admin/orders/1/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "Confirmed"
+}
+
+###
+
+# Admin: eser görseli yükle (multipart/form-data, alan adı "file")
+POST {{Watercolor.Api_HostAddress}}/api/artworks/2/image
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="eser.jpg"
+Content-Type: image/jpeg
+
+< ./eser.jpg
+--boundary--
+
+###
+
+# Admin: eser görselini kaldır
+DELETE {{Watercolor.Api_HostAddress}}/api/artworks/2/image
+Authorization: Bearer {{token}}
+
+###

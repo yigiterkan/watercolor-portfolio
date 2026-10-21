@@ -1,0 +1,156 @@
+# Watercolor Portfolio
+
+A full-stack web shop for selling original watercolor paintings and their prints. Visitors browse the gallery, registered customers order originals or prints in different sizes, and the admin manages artworks, stock and order status.
+
+Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) + EF Core + PostgreSQL** on the backend. The user interface is in Turkish.
+
+| Gallery | Artwork detail |
+|---|---|
+| ![Gallery with search and filters](docs/screenshots/gallery.png) | ![Artwork detail with original and print options](docs/screenshots/artwork-detail.png) |
+
+| Admin: order management | Mobile |
+|---|---|
+| ![Admin order list with status actions](docs/screenshots/admin-orders.png) | <img src="docs/screenshots/mobile.png" alt="Mobile gallery" width="260"> |
+
+<sub>Screenshots use demo data.</sub>
+
+## Features
+
+**Visitors**
+- Gallery with search, type filter (originals / prints), "in stock only" and price sorting; filters live in the URL, so a filtered view can be shared
+- Artwork detail page with all purchase options (the original and prints in different sizes)
+
+**Customers**
+- Register and sign in (JWT)
+- Cart stored in the browser; prices and stock are always re-read from the API
+- Checkout with shipping address, order history and order detail
+
+**Admin**
+- Order list with status filter and pagination; orders move one step at a time: Pending → Confirmed → Shipped → Delivered
+- Create and edit artworks, upload images, and manage each artwork's purchase options (original and prints) with their own price and stock
+
+## Technical highlights
+
+- **Artworks and variants.** An artwork (title, description, image) has many variants: at most one `Original` and any number of `Print` sizes. Price, size and stock live on the variant, and order items point to a variant.
+- **Rules enforced in the database too.** A filtered unique index allows only one original per artwork; check constraints keep stock non-negative and the original's stock at 0 or 1; a composite unique index prevents duplicate print sizes.
+- **Safe stock handling.** Stock is decremented with a single conditional `UPDATE … WHERE Stock >= quantity` inside a transaction, so two customers cannot both buy the last original, and a multi-item order either succeeds completely or not at all.
+- **Order snapshots.** Order items store the title, variant type, size and unit price at the time of purchase, so editing an artwork later does not change past orders.
+- **Authentication and authorization.** ASP.NET Core Identity with JWT bearer tokens and `User` / `Admin` roles. Accounts lock for 15 minutes after 5 failed sign-ins, and the auth endpoints are rate limited per IP.
+- **Image uploads.** File type is detected from the file's magic bytes rather than its name or `Content-Type`; files get random names and are served with `nosniff`. Storage sits behind an `IImageStorage` interface (local disk today, cloud storage later).
+- **REST API design.** Nested resources (`/api/artworks/{id}/variants`), query-string filtering and sorting, pagination on admin orders, and `ProblemDetails` error responses.
+- **Data migration.** Moving from per-artwork prices to variants was done with a hand-written EF Core migration that copies existing data before dropping the old columns.
+
+## Tech stack
+
+| Layer | Technologies |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, Material UI, React Router |
+| Backend | ASP.NET Core Web API (.NET 10), Entity Framework Core 10, ASP.NET Core Identity, JWT |
+| Database | PostgreSQL (Npgsql) |
+
+## Project structure
+
+```
+backend/
+  Watercolor.Api/
+    Controllers/     REST endpoints (artworks, variants, orders, admin orders, auth)
+    Models/          EF Core entities
+    Data/            DbContext, model configuration, role/admin seeding
+    Dtos/            Request and response contracts
+    Auth/            JWT token service, roles, rate-limit policy
+    Storage/         Image storage and file type detection
+    Migrations/      EF Core migrations
+frontend/
+  src/
+    api/             Typed API client
+    auth/            Session state and storage
+    cart/            Cart state
+    components/      Shared UI (header, cards, protected route…)
+    pages/           Public, customer and admin pages
+docs/screenshots/    Images used in this README
+```
+
+## Getting started
+
+### Prerequisites
+
+- [.NET 10 SDK](https://dotnet.microsoft.com/download)
+- [Node.js 24 LTS](https://nodejs.org/)
+- PostgreSQL 16 or newer (on macOS, [Postgres.app](https://postgresapp.com/) is the simplest option)
+
+### 1. Database
+
+Create an empty database:
+
+```bash
+createdb -U postgres watercolor
+```
+
+The development connection string is in `backend/Watercolor.Api/appsettings.Development.json`:
+
+```
+Host=localhost;Port=5432;Database=watercolor;Username=postgres
+```
+
+Adjust it if your PostgreSQL user or password differs.
+
+### 2. Secrets
+
+The JWT signing key and the initial admin account are kept out of the repository with [user secrets](https://learn.microsoft.com/aspnet/core/security/app-secrets):
+
+```bash
+cd backend/Watercolor.Api
+dotnet user-secrets set "Jwt:Key" "<random string, at least 32 characters>"
+dotnet user-secrets set "AdminUser:Email" "admin@example.com"
+dotnet user-secrets set "AdminUser:Password" "<strong password>"
+```
+
+The admin password must contain upper- and lowercase letters, a digit and a symbol, and be at least 6 characters long. The roles and the admin account are created automatically on first start.
+
+### 3. Backend
+
+```bash
+cd backend
+dotnet tool restore
+dotnet ef database update --project Watercolor.Api
+cd Watercolor.Api
+dotnet run
+```
+
+The API runs at `http://localhost:5216`. In development, the OpenAPI document is available at `/openapi/v1.json`, and `Watercolor.Api.http` contains ready-made requests.
+
+### 4. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:5173`. The Vite dev server proxies `/api` and `/uploads` to the backend.
+
+## API overview
+
+| Method | Endpoint | Access |
+|---|---|---|
+| `GET` | `/api/artworks?search=&type=&inStock=&sort=` | Public |
+| `GET` | `/api/artworks/{id}` | Public |
+| `POST` `PUT` `DELETE` | `/api/artworks`, `/api/artworks/{id}` | Admin |
+| `POST` `DELETE` | `/api/artworks/{id}/image` | Admin |
+| `POST` `PUT` `DELETE` | `/api/artworks/{id}/variants`, `/api/artworks/{id}/variants/{variantId}` | Admin |
+| `POST` | `/api/auth/register`, `/api/auth/login` | Public (rate limited) |
+| `GET` | `/api/auth/me` | Signed in |
+| `GET` `POST` | `/api/orders` | Signed in (own orders) |
+| `GET` | `/api/orders/{id}` | Owner or admin |
+| `GET` | `/api/admin/orders?status=&page=&pageSize=` | Admin |
+| `PATCH` | `/api/admin/orders/{id}/status` | Admin |
+
+## Roadmap
+
+- Online payment
+- Order cancellation that returns stock
+- Pagination for the public gallery
+- Image resizing and thumbnails
+- Refresh tokens
+- Admin notification on new orders (SignalR or email)
+- Deployment with HTTPS
