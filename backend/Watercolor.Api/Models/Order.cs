@@ -10,7 +10,12 @@ public class Order
     public OrderStatus Status { get; set; }
     public decimal TotalPrice { get; set; }
     public string ShippingAddress { get; set; } = string.Empty;
+    public string ShippingCity { get; set; } = string.Empty;
     public DateTime CreatedAt { get; set; }
+
+    public string? PaymentToken { get; set; }
+    public string? PaymentId { get; set; }
+    public DateTime? PaidAt { get; set; }
 
     public List<OrderItem> Items { get; set; } = [];
 }

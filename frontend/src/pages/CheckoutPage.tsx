@@ -21,6 +21,7 @@ function CheckoutPage() {
   const navigate = useNavigate()
 
   const [address, setAddress] = useState('')
+  const [city, setCity] = useState('')
   const [showErrors, setShowErrors] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -31,20 +32,23 @@ function CheckoutPage() {
   if (hasStockProblem) return <Navigate to="/cart" replace />
 
   const addressError = showErrors && !address.trim()
+  const cityError = showErrors && !city.trim()
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setShowErrors(true)
     setError(null)
-    if (!address.trim()) return
+    if (!address.trim() || !city.trim()) return
 
     setSubmitting(true)
     try {
       const order = await createOrder({
         items: lines.map((line) => ({ variantId: line.variant.id, quantity: line.quantity })),
         shippingAddress: address.trim(),
+        shippingCity: city.trim(),
       })
-      navigate(`/orders/${order.id}`, { replace: true, state: { justOrdered: true } })
+      // Sipariş sayfası açılınca kullanıcı oradan ödeme sayfasına yönlendirilir.
+      navigate(`/orders/${order.id}`, { replace: true, state: { startPayment: true } })
       // Sepeti, sayfa geçişiyle aynı transition'da boşalt; yoksa yukarıdaki
       // "sepet boşsa /cart'a git" kontrolü araya girer.
       startTransition(clear)
@@ -114,12 +118,25 @@ function CheckoutPage() {
         helperText={addressError ? 'Teslimat adresi gerekli.' : undefined}
         slotProps={{ htmlInput: { maxLength: 500 } }}
       />
+      <TextField
+        label="Şehir"
+        autoComplete="address-level1"
+        required
+        value={city}
+        onChange={(event) => setCity(event.target.value)}
+        error={cityError}
+        helperText={cityError ? 'Şehir gerekli.' : undefined}
+        slotProps={{ htmlInput: { maxLength: 100 } }}
+      />
+      <Typography variant="body2" color="text.secondary">
+        Kart bilgileriniz bu sitede değil, güvenli ödeme sağlayıcısının sayfasında alınır.
+      </Typography>
       <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
         <Button component={Link} to="/cart" size="large">
           Sepete dön
         </Button>
         <Button type="submit" variant="contained" size="large" disabled={submitting}>
-          {submitting ? 'Sipariş veriliyor…' : 'Siparişi onayla'}
+          {submitting ? 'Sipariş oluşturuluyor…' : 'Ödemeye geç'}
         </Button>
       </Stack>
     </Stack>

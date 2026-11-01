@@ -11,6 +11,7 @@ using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
 using Watercolor.Api.Hubs;
 using Watercolor.Api.Models;
+using Watercolor.Api.Payments;
 using Watercolor.Api.Services;
 using Watercolor.Api.Storage;
 
@@ -41,6 +42,17 @@ builder.Services.Configure<JwtOptions>(jwtSection);
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddSingleton<IImageStorage, LocalImageStorage>();
 builder.Services.AddScoped<OrderCancellation>();
+builder.Services.Configure<PaymentOptions>(builder.Configuration.GetSection("Payments"));
+builder.Services.Configure<IyzicoOptions>(builder.Configuration.GetSection("Iyzico"));
+builder.Services.AddScoped<PaymentService>();
+builder.Services.AddHostedService<PaymentExpiryService>();
+
+// iyzico anahtarları yoksa geliştirme ortamında test ödeme sayfası kullanılır; canlıda asla.
+var iyzicoConfigured = builder.Configuration.GetSection("Iyzico").Get<IyzicoOptions>()?.IsConfigured == true;
+if (!iyzicoConfigured && builder.Environment.IsDevelopment())
+    builder.Services.AddSingleton<IPaymentGateway, FakePaymentGateway>();
+else
+    builder.Services.AddScoped<IPaymentGateway, IyzicoPaymentGateway>();
 builder.Services.AddSignalR();
 
 builder.Services
@@ -97,6 +109,9 @@ builder.Services.AddControllers()
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
+
+if (app.Services.GetRequiredService<IPaymentGateway>() is FakePaymentGateway)
+    app.Logger.LogWarning("iyzico anahtarları tanımlı değil: TEST ödeme sayfası kullanılıyor, gerçek ödeme alınmaz.");
 
 using (var scope = app.Services.CreateScope())
 {

@@ -6,14 +6,14 @@ using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
 using Watercolor.Api.Dtos;
 using Watercolor.Api.Models;
-using Watercolor.Api.Services;
+using Watercolor.Api.Payments;
 
 namespace Watercolor.Api.Controllers;
 
 [ApiController]
 [Authorize(Roles = Roles.Admin)]
 [Route("api/admin/orders")]
-public class AdminOrdersController(AppDbContext db, OrderCancellation cancellation) : ControllerBase
+public class AdminOrdersController(AppDbContext db, PaymentService payments) : ControllerBase
 {
     private const int MaxPageSize = 100;
 
@@ -54,7 +54,12 @@ public class AdminOrdersController(AppDbContext db, OrderCancellation cancellati
 
         if (next == OrderStatus.Cancelled)
         {
-            if (!await cancellation.TryCancelAsync(id, OrderStatus.Pending, OrderStatus.Confirmed))
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+            var result = await payments.CancelAsync(
+                id, null, ip, [OrderStatus.AwaitingPayment, OrderStatus.Pending, OrderStatus.Confirmed], HttpContext.RequestAborted);
+            if (result == CancelStatus.RefundFailed)
+                return Problem(statusCode: StatusCodes.Status502BadGateway, title: "Ödeme iade edilemediği için sipariş iptal edilmedi.");
+            if (result != CancelStatus.Cancelled)
                 return Problem(statusCode: StatusCodes.Status409Conflict, title: "Sipariş bu arada güncellenmiş.");
         }
         else
@@ -71,6 +76,7 @@ public class AdminOrdersController(AppDbContext db, OrderCancellation cancellati
         o.Status,
         o.TotalPrice,
         o.ShippingAddress,
+        o.ShippingCity,
         o.CreatedAt,
         o.User.FullName,
         o.User.Email!,

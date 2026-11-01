@@ -18,4 +18,7 @@ public class OrderItem
     public VariantType VariantType { get; set; }
     public int WidthCm { get; set; }
     public int HeightCm { get; set; }
+
+    // Kısmi iade için ödeme sağlayıcısındaki kalem işlem numarası
+    public string? PaymentTransactionId { get; set; }
 }

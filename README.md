@@ -38,11 +38,11 @@ Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) +
 **Customers**
 - Register and sign in (JWT)
 - Cart stored in the browser; prices and stock are always re-read from the API
-- Checkout with shipping address, order history and order detail
-- Cancel an order while it is still pending; the stock goes back on sale
+- Checkout with shipping address and card payment on iyzico's hosted payment page (3D Secure); order history and order detail
+- Cancel an order while it is unpaid or still pending; a paid order is refunded and the stock goes back on sale
 
 **Admin**
-- Order list with status filter and pagination; orders move one step at a time: Pending → Confirmed → Shipped → Delivered, and can be cancelled before shipping
+- Order list with status filter and pagination; orders move one step at a time: Pending → Confirmed → Shipped → Delivered, and can be cancelled (with refund) before shipping
 - Live notification (SignalR) when a customer places or cancels an order; the order list refreshes by itself
 - Create and edit artworks, upload images, and manage each artwork's purchase options (original and prints) with their own price and stock
 
@@ -54,6 +54,7 @@ Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) +
 - **Order snapshots.** Order items store the title, variant type, size and unit price at the time of purchase, so editing an artwork later does not change past orders.
 - **Authentication and authorization.** ASP.NET Core Identity with JWT bearer tokens and `User` / `Admin` roles. Accounts lock for 15 minutes after 5 failed sign-ins, and the auth endpoints are rate limited per IP.
 - **Image uploads.** File type is detected from the file's magic bytes rather than its name or `Content-Type`. Each upload is re-encoded with SkiaSharp into a 1600 px WebP and a 640 px thumbnail: phone photos are rotated according to their EXIF orientation, EXIF data such as GPS location is stripped, and oversized images are rejected. Files get random names, are served with `nosniff`, and storage sits behind an `IImageStorage` interface (local disk today, cloud storage later).
+- **Payments without touching card data.** Checkout uses iyzico's hosted Checkout Form, so card numbers never reach this server. The result is always verified with iyzico's API rather than trusted from the browser, and the paid amount and basket are checked against the order. Orders wait in `AwaitingPayment` with their stock reserved; a background job cancels unpaid orders after 30 minutes, but first asks iyzico whether the payment actually went through, so a customer who paid and closed the browser is not cancelled. Cancelling a paid order refunds it (full cancel on the same day, per-item refunds after). The gateway sits behind an `IPaymentGateway` interface; in development without iyzico keys a local test payment page is used instead.
 - **Cancellation without double refunds.** The status check and the switch to `Cancelled` happen in one conditional `UPDATE`, so a customer and an admin cancelling at the same moment return the stock only once.
 - **Real-time admin notifications.** An admin-only SignalR hub authenticates with the same JWT (passed as `access_token` for WebSockets); a failed notification never fails the order itself.
 - **REST API design.** Nested resources (`/api/artworks/{id}/variants`), query-string filtering and sorting, pagination on admin orders, and `ProblemDetails` error responses.
@@ -65,6 +66,7 @@ Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) +
 |---|---|
 | Frontend | React 19, TypeScript, Vite, Material UI, React Router, SignalR client |
 | Backend | ASP.NET Core Web API (.NET 10), Entity Framework Core 10, ASP.NET Core Identity, JWT, SignalR, SkiaSharp |
+| Payments | iyzico (Checkout Form, sandbox) |
 | Database | PostgreSQL (Npgsql) |
 
 ## Project structure
@@ -79,6 +81,7 @@ backend/
     Auth/            JWT token service, roles, rate-limit policy
     Storage/         Image storage, file type detection, resizing
     Services/        Order cancellation
+    Payments/        Payment gateway (iyzico + development test page), payment flow, expiry job
     Hubs/            SignalR hub for admin notifications
     Migrations/      EF Core migrations
 frontend/
@@ -128,6 +131,15 @@ dotnet user-secrets set "AdminUser:Password" "<strong password>"
 
 The admin password must contain upper- and lowercase letters, a digit and a symbol, and be at least 6 characters long. The roles and the admin account are created automatically on first start.
 
+For payments, create a free [iyzico sandbox](https://sandbox-merchant.iyzipay.com/) account and add its keys:
+
+```bash
+dotnet user-secrets set "Iyzico:ApiKey" "<sandbox api key>"
+dotnet user-secrets set "Iyzico:SecretKey" "<sandbox secret key>"
+```
+
+Without these keys the development environment falls back to a local test payment page with "approve" and "reject" buttons, so the whole order flow still works. Outside development the keys are required.
+
 ### 3. Backend
 
 ```bash
@@ -163,14 +175,16 @@ Open `http://localhost:5173`. The Vite dev server proxies `/api`, `/uploads` and
 | `GET` | `/api/auth/me` | Signed in |
 | `GET` `POST` | `/api/orders` | Signed in (own orders) |
 | `GET` | `/api/orders/{id}` | Owner or admin |
-| `POST` | `/api/orders/{id}/cancel` | Owner (pending orders only) |
+| `POST` | `/api/orders/{id}/payment` | Owner (returns the payment page URL) |
+| `POST` | `/api/orders/{id}/cancel` | Owner (unpaid or pending orders) |
+| `POST` | `/api/payments/callback` | Payment provider redirect (form post) |
 | `GET` | `/api/admin/orders?status=&page=&pageSize=` | Admin |
 | `PATCH` | `/api/admin/orders/{id}/status` | Admin (including `Cancelled`) |
 | WebSocket | `/hubs/admin` (`OrderCreated`, `OrderCancelled`) | Admin |
 
 ## Roadmap
 
-- Online payment
+- Live iyzico account (requires a registered business)
 - Refresh tokens
 - Email notifications to customers
 - Deployment with HTTPS

@@ -19,7 +19,9 @@ public record OrderDto(
     OrderStatus Status,
     decimal TotalPrice,
     string ShippingAddress,
+    string ShippingCity,
     DateTime CreatedAt,
+    DateTime? PaymentExpiresAt,
     List<OrderItemDto> Items);
 
 public class OrderItemRequest
@@ -37,13 +39,19 @@ public class CreateOrderRequest
 
     [Required, StringLength(500)]
     public string ShippingAddress { get; set; } = string.Empty;
+
+    [Required, StringLength(100)]
+    public string ShippingCity { get; set; } = string.Empty;
 }
+
+public record StartPaymentResponse(string PaymentPageUrl);
 
 public record AdminOrderDto(
     int Id,
     OrderStatus Status,
     decimal TotalPrice,
     string ShippingAddress,
+    string ShippingCity,
     DateTime CreatedAt,
     string CustomerName,
     string CustomerEmail,

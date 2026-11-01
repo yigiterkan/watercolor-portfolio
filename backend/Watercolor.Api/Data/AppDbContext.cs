@@ -53,6 +53,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
             order.Property(o => o.Status).HasConversion<string>().HasMaxLength(20);
             order.Property(o => o.TotalPrice).HasPrecision(12, 2);
             order.Property(o => o.ShippingAddress).HasMaxLength(500);
+            order.Property(o => o.ShippingCity).HasMaxLength(100);
+            order.Property(o => o.PaymentToken).HasMaxLength(200);
+            order.Property(o => o.PaymentId).HasMaxLength(100);
+            order.HasIndex(o => o.PaymentToken);
 
             order.HasOne(o => o.User)
                 .WithMany(u => u.Orders)
@@ -65,6 +69,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
             item.Property(i => i.UnitPrice).HasPrecision(10, 2);
             item.Property(i => i.ArtworkTitle).HasMaxLength(200);
             item.Property(i => i.VariantType).HasConversion<string>().HasMaxLength(20);
+            item.Property(i => i.PaymentTransactionId).HasMaxLength(100);
 
             item.HasOne(i => i.Order)
                 .WithMany(o => o.Items)

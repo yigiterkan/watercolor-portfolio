@@ -1,33 +1,32 @@
 using System.Linq.Expressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
 using Watercolor.Api.Dtos;
-using Watercolor.Api.Hubs;
 using Watercolor.Api.Models;
-using Watercolor.Api.Services;
+using Watercolor.Api.Payments;
 
 namespace Watercolor.Api.Controllers;
 
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
-public class OrdersController(AppDbContext db, OrderCancellation cancellation, IHubContext<AdminHub> adminHub)
-    : ControllerBase
+public class OrdersController(AppDbContext db, PaymentService payments) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<OrderDto>>> GetMine()
     {
         var userId = User.GetUserId();
 
-        return await db.Orders
+        var orders = await db.Orders
             .Where(o => o.UserId == userId)
             .OrderByDescending(o => o.CreatedAt)
             .Select(ToDto)
             .ToListAsync();
+
+        return orders.Select(WithExpiry).ToList();
     }
 
     [HttpGet("{id:int}")]
@@ -41,7 +40,7 @@ public class OrdersController(AppDbContext db, OrderCancellation cancellation, I
             .Select(ToDto)
             .FirstOrDefaultAsync();
 
-        return order is null ? NotFound() : order;
+        return order is null ? NotFound() : WithExpiry(order);
     }
 
     [HttpPost]
@@ -87,8 +86,9 @@ public class OrdersController(AppDbContext db, OrderCancellation cancellation, I
         var order = new Order
         {
             UserId = User.GetUserId()!,
-            Status = OrderStatus.Pending,
+            Status = OrderStatus.AwaitingPayment,
             ShippingAddress = request.ShippingAddress.Trim(),
+            ShippingCity = request.ShippingCity.Trim(),
             CreatedAt = DateTime.UtcNow,
             Items = request.Items
                 .Select(i =>
@@ -113,45 +113,47 @@ public class OrdersController(AppDbContext db, OrderCancellation cancellation, I
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
 
-        await NotifyAdmins("OrderCreated", order);
-
         var dto = await db.Orders.Where(o => o.Id == order.Id).Select(ToDto).FirstAsync();
-        return CreatedAtAction(nameof(GetById), new { id = order.Id }, dto);
+        return CreatedAtAction(nameof(GetById), new { id = order.Id }, WithExpiry(dto));
     }
 
-    // Müşteri yalnızca henüz onaylanmamış siparişini iptal edebilir.
+    // Ödeme sayfasının adresini döner; frontend kullanıcıyı oraya yönlendirir.
+    [HttpPost("{id:int}/payment")]
+    public async Task<ActionResult<StartPaymentResponse>> StartPayment(int id, CancellationToken cancellationToken)
+    {
+        var result = await payments.StartAsync(id, User.GetUserId()!, ClientIp, cancellationToken);
+        return result.Status switch
+        {
+            StartPaymentStatus.Started => new StartPaymentResponse(result.PaymentPageUrl!),
+            StartPaymentStatus.NotFound => NotFound(),
+            StartPaymentStatus.NotAwaitingPayment => Problem(statusCode: StatusCodes.Status409Conflict, title: "Bu siparişin ödemesi zaten alınmış ya da sipariş iptal edilmiş."),
+            StartPaymentStatus.Expired => Problem(statusCode: StatusCodes.Status409Conflict, title: "Ödeme süresi doldu; sipariş kısa süre içinde iptal edilecek."),
+            _ => Problem(statusCode: StatusCodes.Status502BadGateway, title: "Ödeme sayfası açılamadı. Lütfen biraz sonra tekrar deneyin."),
+        };
+    }
+
+    // Müşteri ödenmemiş ya da henüz onaylanmamış siparişini iptal edebilir; ödenmişse para iade edilir.
     [HttpPost("{id:int}/cancel")]
-    public async Task<ActionResult<OrderDto>> Cancel(int id)
+    public async Task<ActionResult<OrderDto>> Cancel(int id, CancellationToken cancellationToken)
     {
-        var userId = User.GetUserId();
-        var order = await db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
-        if (order is null) return NotFound();
+        var result = await payments.CancelAsync(
+            id, User.GetUserId()!, ClientIp, [OrderStatus.AwaitingPayment, OrderStatus.Pending], cancellationToken);
 
-        if (!await cancellation.TryCancelAsync(id, OrderStatus.Pending))
-            return Problem(
-                statusCode: StatusCodes.Status409Conflict,
-                title: "Bu sipariş artık iptal edilemez. Onaylanmış siparişler için bizimle iletişime geçin.");
-
-        await NotifyAdmins("OrderCancelled", order);
-
-        return await db.Orders.Where(o => o.Id == id).Select(ToDto).FirstAsync();
+        return result switch
+        {
+            CancelStatus.Cancelled => WithExpiry(await db.Orders.Where(o => o.Id == id).Select(ToDto).FirstAsync(cancellationToken)),
+            CancelStatus.NotFound => NotFound(),
+            CancelStatus.RefundFailed => Problem(statusCode: StatusCodes.Status502BadGateway, title: "İade yapılamadığı için sipariş iptal edilemedi. Lütfen bizimle iletişime geçin."),
+            _ => Problem(statusCode: StatusCodes.Status409Conflict, title: "Bu sipariş artık iptal edilemez. Onaylanmış siparişler için bizimle iletişime geçin."),
+        };
     }
 
-    // Bildirim gönderilemezse sipariş yine de geçerli; hata kullanıcıya yansımasın.
-    private async Task NotifyAdmins(string method, Order order)
-    {
-        try
-        {
-            var itemCount = await db.OrderItems.Where(i => i.OrderId == order.Id).SumAsync(i => i.Quantity);
-            var notification = new OrderNotification(order.Id, User.Identity?.Name ?? "", order.TotalPrice, itemCount);
-            await adminHub.Clients.All.SendAsync(method, notification);
-        }
-        catch (Exception ex)
-        {
-            HttpContext.RequestServices.GetRequiredService<ILogger<OrdersController>>()
-                .LogWarning(ex, "Admin bildirimi gönderilemedi (sipariş {OrderId})", order.Id);
-        }
-    }
+    private string ClientIp => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "127.0.0.1";
+
+    private OrderDto WithExpiry(OrderDto order) =>
+        order.Status == OrderStatus.AwaitingPayment
+            ? order with { PaymentExpiresAt = payments.ExpiresAt(new Order { CreatedAt = order.CreatedAt }) }
+            : order;
 
     private static string Describe(ArtworkVariant v) =>
         v.Type == VariantType.Original ? "orijinal" : $"{v.WidthCm} × {v.HeightCm} cm baskı";
@@ -161,7 +163,9 @@ public class OrdersController(AppDbContext db, OrderCancellation cancellation, I
         o.Status,
         o.TotalPrice,
         o.ShippingAddress,
+        o.ShippingCity,
         o.CreatedAt,
+        null,
         o.Items
             .OrderBy(i => i.Id)
             .Select(i => new OrderItemDto(

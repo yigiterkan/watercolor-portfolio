@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
+import CircularProgress from '@mui/material/CircularProgress'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
@@ -12,12 +13,13 @@ import MuiLink from '@mui/material/Link'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import { Link, useLocation, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { ApiError } from '../api/client.ts'
-import { cancelOrder, getOrder, type Order } from '../api/orders.ts'
+import { cancelOrder, getOrder, startPayment, type Order } from '../api/orders.ts'
 import Loading from '../components/Loading.tsx'
 import OrderStatusChip from '../components/OrderStatusChip.tsx'
-import { formatDate, formatPrice } from '../utils/format.ts'
+import { formatDate, formatPrice, formatTime } from '../utils/format.ts'
+import { canCustomerCancel } from '../utils/orderStatus.ts'
 import { variantLabel } from '../utils/variant.ts'
 
 type State =
@@ -29,9 +31,15 @@ type State =
 function OrderDetail({ id }: { id: number }) {
   const location = useLocation()
   const navigate = useNavigate()
-  const [justOrdered] = useState(
-    () => (location.state as { justOrdered?: boolean } | null)?.justOrdered === true,
-  )
+  const [searchParams] = useSearchParams()
+  // Ödeme sağlayıcısından dönüşte ?payment=success|failed gelir; yeni siparişte ödeme otomatik başlar.
+  const [arrival] = useState(() => ({
+    startPayment: (location.state as { startPayment?: boolean } | null)?.startPayment === true,
+    payment: searchParams.get('payment'),
+  }))
+  const paymentStarted = useRef(false)
+  const [paying, setPaying] = useState(arrival.startPayment)
+  const [payError, setPayError] = useState<string | null>(null)
   const [state, setState] = useState<State>(
     Number.isInteger(id) ? { status: 'loading' } : { status: 'notFound' },
   )
@@ -39,10 +47,26 @@ function OrderDetail({ id }: { id: number }) {
   const [cancelling, setCancelling] = useState(false)
   const [cancelResult, setCancelResult] = useState<{ ok: boolean; message: string } | null>(null)
 
-  // "Siparişiniz alındı" mesajı bir kez gösterilsin; sayfa yenilenince tekrar çıkmasın.
+  // Mesajlar bir kez gösterilsin; sayfa yenilenince tekrar çıkmasın ya da ödeme yeniden başlamasın.
   useEffect(() => {
-    if (justOrdered) navigate(location.pathname, { replace: true, state: null })
-  }, [justOrdered, navigate, location.pathname])
+    if (arrival.startPayment || arrival.payment) navigate(location.pathname, { replace: true, state: null })
+  }, [arrival, navigate, location.pathname])
+
+  const redirectToPayment = (orderId: number) =>
+    startPayment(orderId)
+      .then(({ paymentPageUrl }) => window.location.assign(paymentPageUrl))
+      .catch((err) => {
+        setPayError(
+          err instanceof ApiError && err.status === 409 ? err.message : 'Ödeme sayfası açılamadı. Lütfen tekrar deneyin.',
+        )
+        setPaying(false)
+      })
+
+  useEffect(() => {
+    if (state.status !== 'loaded' || !arrival.startPayment || paymentStarted.current) return
+    paymentStarted.current = true
+    if (state.order.status === 'AwaitingPayment') redirectToPayment(state.order.id)
+  }, [state, arrival])
 
   useEffect(() => {
     if (!Number.isInteger(id)) return
@@ -77,7 +101,40 @@ function OrderDetail({ id }: { id: number }) {
 
   return (
     <Stack spacing={3} sx={{ maxWidth: 720 }}>
-      {justOrdered && !cancelResult && <Alert severity="success">Siparişiniz alındı. Teşekkür ederiz!</Alert>}
+      {arrival.payment === 'success' && order.status !== 'AwaitingPayment' && order.status !== 'Cancelled' && !cancelResult && (
+        <Alert severity="success">Ödemeniz alındı, siparişiniz hazırlanacak. Teşekkür ederiz!</Alert>
+      )}
+      {arrival.payment === 'failed' && order.status === 'AwaitingPayment' && !payError && (
+        <Alert severity="error">Ödeme tamamlanamadı. Aşağıdan tekrar deneyebilirsiniz.</Alert>
+      )}
+      {order.status === 'AwaitingPayment' &&
+        (paying ? (
+          <Alert severity="info" icon={<CircularProgress size={20} />}>
+            Güvenli ödeme sayfasına yönlendiriliyorsunuz…
+          </Alert>
+        ) : (
+          <Alert
+            severity="warning"
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                onClick={() => {
+                  setPaying(true)
+                  setPayError(null)
+                  redirectToPayment(order.id)
+                }}
+              >
+                Ödemeyi tamamla
+              </Button>
+            }
+          >
+            {payError ??
+              `Ödemeniz henüz alınmadı.${
+                order.paymentExpiresAt ? ` Saat ${formatTime(order.paymentExpiresAt)}'e kadar` : ''
+              } tamamlanmazsa sipariş iptal edilir ve eser yeniden satışa çıkar.`}
+          </Alert>
+        ))}
       {cancelResult && <Alert severity={cancelResult.ok ? 'success' : 'error'}>{cancelResult.message}</Alert>}
       <Stack spacing={1} sx={{ alignItems: 'flex-start' }}>
         <Typography variant="h4" component="h1">
@@ -126,8 +183,9 @@ function OrderDetail({ id }: { id: number }) {
           Teslimat adresi
         </Typography>
         <Typography sx={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{order.shippingAddress}</Typography>
+        <Typography>{order.shippingCity}</Typography>
       </Stack>
-      {order.status === 'Pending' && (
+      {canCustomerCancel(order.status) && !(paying && order.status === 'AwaitingPayment') && (
         <Stack direction="row" sx={{ justifyContent: 'flex-end' }}>
           <Button color="error" variant="outlined" onClick={() => setConfirmCancel(true)}>
             Siparişi iptal et
@@ -137,7 +195,10 @@ function OrderDetail({ id }: { id: number }) {
       <Dialog open={confirmCancel} onClose={() => !cancelling && setConfirmCancel(false)}>
         <DialogTitle>Sipariş iptal edilsin mi?</DialogTitle>
         <DialogContent>
-          <DialogContentText>Sipariş #{order.id} iptal edilecek. Bu işlem geri alınamaz.</DialogContentText>
+          <DialogContentText>
+            Sipariş #{order.id} iptal edilecek.{order.status === 'Pending' && ' Ödemeniz kartınıza iade edilecek.'} Bu
+            işlem geri alınamaz.
+          </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setConfirmCancel(false)} disabled={cancelling}>

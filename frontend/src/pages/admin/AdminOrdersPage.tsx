@@ -128,6 +128,7 @@ function OrderRow({ order, updating, onAdvance, onCancel }: OrderRowProps) {
                 <Typography variant="body2" sx={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>
                   {order.shippingAddress}
                 </Typography>
+                <Typography variant="body2">{order.shippingCity}</Typography>
               </Box>
             </Stack>
           </Collapse>
@@ -184,7 +185,9 @@ function AdminOrdersPage() {
       setActionError(
         err instanceof ApiError && err.status === 409
           ? `Sipariş #${order.id} bu arada güncellenmiş. Liste yenilendi.`
-          : `Sipariş #${order.id} güncellenemedi. Lütfen tekrar deneyin.`,
+          : err instanceof ApiError && err.status === 502
+            ? err.message
+            : `Sipariş #${order.id} güncellenemedi. Lütfen tekrar deneyin.`,
       )
     }
     setUpdatingId(null)
@@ -273,7 +276,9 @@ function AdminOrdersPage() {
         <DialogTitle>Sipariş iptal edilsin mi?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Sipariş #{toCancel?.id} iptal edilecek ve stok geri eklenecek. Bu işlem geri alınamaz.
+            Sipariş #{toCancel?.id} iptal edilecek ve stok geri eklenecek.
+            {toCancel && toCancel.status !== 'AwaitingPayment' && ' Alınan ödeme müşteriye iade edilecek.'} Bu işlem geri
+            alınamaz.
           </DialogContentText>
         </DialogContent>
         <DialogActions>

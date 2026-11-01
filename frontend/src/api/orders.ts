@@ -1,7 +1,7 @@
 import type { VariantType } from './artworks.ts'
 import { ApiError, apiFetch } from './client.ts'
 
-export type OrderStatus = 'Pending' | 'Confirmed' | 'Shipped' | 'Delivered' | 'Cancelled'
+export type OrderStatus = 'AwaitingPayment' | 'Pending' | 'Confirmed' | 'Shipped' | 'Delivered' | 'Cancelled'
 
 export type OrderItem = {
   variantId: number
@@ -20,13 +20,17 @@ export type Order = {
   status: OrderStatus
   totalPrice: number
   shippingAddress: string
+  shippingCity: string
   createdAt: string
+  // Yalnızca ödeme bekleyen siparişlerde dolu
+  paymentExpiresAt?: string | null
   items: OrderItem[]
 }
 
 export type CreateOrderInput = {
   items: { variantId: number; quantity: number }[]
   shippingAddress: string
+  shippingCity: string
 }
 
 export function createOrder(input: CreateOrderInput) {
@@ -48,4 +52,8 @@ export async function getOrder(id: number): Promise<Order | null> {
 
 export function cancelOrder(id: number) {
   return apiFetch<Order>(`/api/orders/${id}/cancel`, { method: 'POST' })
+}
+
+export function startPayment(id: number) {
+  return apiFetch<{ paymentPageUrl: string }>(`/api/orders/${id}/payment`, { method: 'POST' })
 }
