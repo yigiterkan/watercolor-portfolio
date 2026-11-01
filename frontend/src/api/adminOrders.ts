@@ -1,16 +1,9 @@
-import { apiFetch } from './client.ts'
+import { apiFetch, type PagedResult } from './client.ts'
 import type { Order, OrderStatus } from './orders.ts'
 
 export type AdminOrder = Order & {
   customerName: string
   customerEmail: string
-}
-
-export type PagedResult<T> = {
-  items: T[]
-  totalCount: number
-  page: number
-  pageSize: number
 }
 
 export type AdminOrdersQuery = {

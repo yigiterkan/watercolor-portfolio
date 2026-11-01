@@ -1,7 +1,7 @@
 import type { VariantType } from './artworks.ts'
 import { ApiError, apiFetch } from './client.ts'
 
-export type OrderStatus = 'Pending' | 'Confirmed' | 'Shipped' | 'Delivered'
+export type OrderStatus = 'Pending' | 'Confirmed' | 'Shipped' | 'Delivered' | 'Cancelled'
 
 export type OrderItem = {
   variantId: number
@@ -44,4 +44,8 @@ export async function getOrder(id: number): Promise<Order | null> {
     if (error instanceof ApiError && error.status === 404) return null
     throw error
   }
+}
+
+export function cancelOrder(id: number) {
+  return apiFetch<Order>(`/api/orders/${id}/cancel`, { method: 'POST' })
 }

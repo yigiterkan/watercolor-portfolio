@@ -18,6 +18,7 @@ import TableBody from '@mui/material/TableBody'
 import TableCell from '@mui/material/TableCell'
 import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
+import TablePagination from '@mui/material/TablePagination'
 import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
 import { Link } from 'react-router'
@@ -37,16 +38,35 @@ function describeVariants(artwork: Artwork) {
 
 function AdminArtworksPage() {
   const [artworks, setArtworks] = useState<Artwork[] | null>(null)
+  const [totalCount, setTotalCount] = useState(0)
+  const [page, setPage] = useState(0) // TablePagination 0'dan, API 1'den sayar.
+  const [pageSize, setPageSize] = useState(10)
+  const [reloadKey, setReloadKey] = useState(0)
   const [loadError, setLoadError] = useState(false)
   const [toDelete, setToDelete] = useState<Artwork | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   useEffect(() => {
-    getArtworks()
-      .then(setArtworks)
-      .catch(() => setLoadError(true))
-  }, [])
+    let cancelled = false
+    getArtworks({ page: page + 1, pageSize })
+      .then((result) => {
+        if (cancelled) return
+        // Son sayfadaki son eser silindiyse bir önceki sayfaya dön.
+        if (result.items.length === 0 && page > 0) {
+          setPage(page - 1)
+          return
+        }
+        setArtworks(result.items)
+        setTotalCount(result.totalCount)
+      })
+      .catch(() => {
+        if (!cancelled) setLoadError(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [page, pageSize, reloadKey])
 
   const handleDelete = async () => {
     if (!toDelete) return
@@ -55,7 +75,7 @@ function AdminArtworksPage() {
     setDeleteError(null)
     try {
       await deleteArtwork(toDelete.id)
-      setArtworks((current) => current?.filter((artwork) => artwork.id !== toDelete.id) ?? null)
+      setReloadKey((key) => key + 1)
     } catch (err) {
       setDeleteError(
         err instanceof ApiError && err.status === 409
@@ -141,6 +161,20 @@ function AdminArtworksPage() {
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            component="div"
+            count={totalCount}
+            page={page}
+            onPageChange={(_, newPage) => setPage(newPage)}
+            rowsPerPage={pageSize}
+            onRowsPerPageChange={(event) => {
+              setPageSize(Number(event.target.value))
+              setPage(0)
+            }}
+            rowsPerPageOptions={[10, 25, 50]}
+            labelRowsPerPage="Sayfa başına:"
+            labelDisplayedRows={({ from, to, count }) => `${from}–${to} / ${count}`}
+          />
         </TableContainer>
       )}
       <Dialog open={toDelete !== null} onClose={() => !deleting && setToDelete(null)}>

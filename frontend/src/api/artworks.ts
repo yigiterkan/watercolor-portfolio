@@ -1,4 +1,4 @@
-import { ApiError, apiFetch } from './client.ts'
+import { ApiError, apiFetch, type PagedResult } from './client.ts'
 
 export type VariantType = 'Original' | 'Print'
 
@@ -16,6 +16,7 @@ export type Artwork = {
   title: string
   description: string | null
   imageUrl: string | null
+  thumbnailUrl: string | null
   createdAt: string
   variants: Variant[]
 }
@@ -27,6 +28,9 @@ export type ArtworkQuery = {
   type?: VariantType
   inStock?: boolean
   sort?: ArtworkSort
+  variantIds?: number[]
+  page?: number
+  pageSize?: number
 }
 
 export function getArtworks(query: ArtworkQuery = {}) {
@@ -35,9 +39,12 @@ export function getArtworks(query: ArtworkQuery = {}) {
   if (query.type) params.set('type', query.type)
   if (query.inStock) params.set('inStock', 'true')
   if (query.sort && query.sort !== 'Newest') params.set('sort', query.sort)
+  for (const id of query.variantIds ?? []) params.append('variantIds', String(id))
+  if (query.page && query.page > 1) params.set('page', String(query.page))
+  if (query.pageSize) params.set('pageSize', String(query.pageSize))
 
   const qs = params.toString()
-  return apiFetch<Artwork[]>(qs ? `/api/artworks?${qs}` : '/api/artworks')
+  return apiFetch<PagedResult<Artwork>>(qs ? `/api/artworks?${qs}` : '/api/artworks')
 }
 
 export async function getArtwork(id: number): Promise<Artwork | null> {

@@ -5,6 +5,11 @@ import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Collapse from '@mui/material/Collapse'
+import Dialog from '@mui/material/Dialog'
+import DialogActions from '@mui/material/DialogActions'
+import DialogContent from '@mui/material/DialogContent'
+import DialogContentText from '@mui/material/DialogContentText'
+import DialogTitle from '@mui/material/DialogTitle'
 import IconButton from '@mui/material/IconButton'
 import MenuItem from '@mui/material/MenuItem'
 import Paper from '@mui/material/Paper'
@@ -18,13 +23,15 @@ import TablePagination from '@mui/material/TablePagination'
 import TableRow from '@mui/material/TableRow'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
-import { getAdminOrders, updateOrderStatus, type AdminOrder, type PagedResult } from '../../api/adminOrders.ts'
+import { getAdminOrders, updateOrderStatus, type AdminOrder } from '../../api/adminOrders.ts'
+import type { PagedResult } from '../../api/client.ts'
 import { ApiError } from '../../api/client.ts'
 import type { OrderStatus } from '../../api/orders.ts'
 import Loading from '../../components/Loading.tsx'
 import OrderStatusChip from '../../components/OrderStatusChip.tsx'
 import { formatDate, formatPrice } from '../../utils/format.ts'
-import { nextOrderStatus, ORDER_STATUS_LABELS, ORDER_STATUSES } from '../../utils/orderStatus.ts'
+import { ADMIN_ORDERS_CHANGED } from '../../components/AdminNotifications.tsx'
+import { canAdminCancel, nextOrderStatus, ORDER_STATUS_LABELS, ORDER_STATUSES } from '../../utils/orderStatus.ts'
 import { variantLabel } from '../../utils/variant.ts'
 
 const NEXT_ACTION_LABELS: Partial<Record<OrderStatus, string>> = {
@@ -39,9 +46,10 @@ type OrderRowProps = {
   order: AdminOrder
   updating: boolean
   onAdvance: (order: AdminOrder, next: OrderStatus) => void
+  onCancel: (order: AdminOrder) => void
 }
 
-function OrderRow({ order, updating, onAdvance }: OrderRowProps) {
+function OrderRow({ order, updating, onAdvance, onCancel }: OrderRowProps) {
   const [open, setOpen] = useState(false)
   const next = nextOrderStatus(order.status)
 
@@ -73,17 +81,24 @@ function OrderRow({ order, updating, onAdvance }: OrderRowProps) {
           <OrderStatusChip status={order.status} />
         </TableCell>
         <TableCell align="right">
-          {next && (
-            <Button
-              size="small"
-              variant="outlined"
-              disabled={updating}
-              onClick={() => onAdvance(order, next)}
-              sx={{ whiteSpace: 'nowrap' }}
-            >
-              {NEXT_ACTION_LABELS[next]}
-            </Button>
-          )}
+          <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+            {canAdminCancel(order.status) && (
+              <Button size="small" color="error" disabled={updating} onClick={() => onCancel(order)} sx={{ whiteSpace: 'nowrap' }}>
+                İptal et
+              </Button>
+            )}
+            {next && (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={updating}
+                onClick={() => onAdvance(order, next)}
+                sx={{ whiteSpace: 'nowrap' }}
+              >
+                {NEXT_ACTION_LABELS[next]}
+              </Button>
+            )}
+          </Stack>
         </TableCell>
       </TableRow>
       <TableRow>
@@ -150,6 +165,15 @@ function AdminOrdersPage() {
       cancelled = true
     }
   }, [status, page, pageSize, reloadKey])
+
+  const [toCancel, setToCancel] = useState<AdminOrder | null>(null)
+
+  // Yeni sipariş bildirimi gelince liste kendiliğinden yenilenir.
+  useEffect(() => {
+    const reload = () => setReloadKey((key) => key + 1)
+    window.addEventListener(ADMIN_ORDERS_CHANGED, reload)
+    return () => window.removeEventListener(ADMIN_ORDERS_CHANGED, reload)
+  }, [])
 
   const handleAdvance = async (order: AdminOrder, next: OrderStatus) => {
     setActionError(null)
@@ -223,6 +247,7 @@ function AdminOrdersPage() {
                     order={order}
                     updating={updatingId === order.id}
                     onAdvance={handleAdvance}
+                    onCancel={setToCancel}
                   />
                 ))}
               </TableBody>
@@ -244,6 +269,27 @@ function AdminOrdersPage() {
           />
         </Paper>
       )}
+      <Dialog open={toCancel !== null} onClose={() => setToCancel(null)}>
+        <DialogTitle>Sipariş iptal edilsin mi?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Sipariş #{toCancel?.id} iptal edilecek ve stok geri eklenecek. Bu işlem geri alınamaz.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setToCancel(null)}>Vazgeç</Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => {
+              if (toCancel) handleAdvance(toCancel, 'Cancelled')
+              setToCancel(null)
+            }}
+          >
+            Siparişi iptal et
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }

@@ -1,6 +1,8 @@
 import Box from '@mui/material/Box'
 import Container from '@mui/material/Container'
 import { Navigate, Route, Routes } from 'react-router'
+import { useAuth } from './auth/AuthContext.ts'
+import AdminNotifications from './components/AdminNotifications.tsx'
 import Footer from './components/Footer.tsx'
 import Header from './components/Header.tsx'
 import ProtectedRoute from './components/ProtectedRoute.tsx'
@@ -20,6 +22,8 @@ import OrdersPage from './pages/OrdersPage.tsx'
 import RegisterPage from './pages/RegisterPage.tsx'
 
 function App() {
+  const { isAdmin } = useAuth()
+
   return (
     <Box sx={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <Header />
@@ -49,6 +53,7 @@ function App() {
         </Routes>
       </Container>
       <Footer />
+      {isAdmin && <AdminNotifications />}
     </Box>
   )
 }

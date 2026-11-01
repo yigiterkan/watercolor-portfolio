@@ -10,6 +10,7 @@ public record ArtworkDto(
     string Title,
     string? Description,
     string? ImageUrl,
+    string? ThumbnailUrl,
     DateTime CreatedAt,
     List<VariantDto> Variants);
 
@@ -57,4 +58,13 @@ public class ArtworkQuery
     public bool InStock { get; set; }
 
     public ArtworkSort Sort { get; set; } = ArtworkSort.Newest;
+
+    // Sepetteki seçeneklerin eserlerini getirmek için.
+    public List<int>? VariantIds { get; set; }
+
+    [Range(1, int.MaxValue)]
+    public int Page { get; set; } = 1;
+
+    [Range(1, 100)]
+    public int PageSize { get; set; } = 12;
 }

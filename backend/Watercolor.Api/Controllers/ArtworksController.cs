@@ -17,7 +17,7 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
     private const long MaxImageBytes = 5 * 1024 * 1024;
 
     [HttpGet]
-    public async Task<ActionResult<List<ArtworkDto>>> GetAll([FromQuery] ArtworkQuery query)
+    public async Task<ActionResult<PagedResult<ArtworkDto>>> GetAll([FromQuery] ArtworkQuery query)
     {
         var artworks = db.Artworks.AsQueryable();
 
@@ -30,6 +30,9 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
                 (a.Description != null && EF.Functions.ILike(a.Description, pattern, "\\")));
         }
 
+        if (query.VariantIds is { Count: > 0 })
+            artworks = artworks.Where(a => a.Variants.Any(v => query.VariantIds.Contains(v.Id)));
+
         if (query.Type is not null || query.InStock)
         {
             artworks = artworks.Where(a => a.Variants.Any(v =>
@@ -40,14 +43,23 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
         {
             ArtworkSort.PriceAsc => artworks
                 .OrderBy(a => a.Variants.Any() ? 0 : 1)
-                .ThenBy(a => a.Variants.Min(v => (decimal?)v.Price)),
+                .ThenBy(a => a.Variants.Min(v => (decimal?)v.Price))
+                .ThenByDescending(a => a.Id),
             ArtworkSort.PriceDesc => artworks
                 .OrderBy(a => a.Variants.Any() ? 0 : 1)
-                .ThenByDescending(a => a.Variants.Min(v => (decimal?)v.Price)),
-            _ => artworks.OrderByDescending(a => a.CreatedAt),
+                .ThenByDescending(a => a.Variants.Min(v => (decimal?)v.Price))
+                .ThenByDescending(a => a.Id),
+            _ => artworks.OrderByDescending(a => a.CreatedAt).ThenByDescending(a => a.Id),
         };
 
-        return await artworks.Select(ToDto).ToListAsync();
+        var totalCount = await artworks.CountAsync();
+        var items = await artworks
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(ToDto)
+            .ToListAsync();
+
+        return new PagedResult<ArtworkDto>(items, totalCount, query.Page, query.PageSize);
     }
 
     [HttpGet("{id:int}")]
@@ -97,7 +109,7 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
 
         db.Artworks.Remove(artwork);
         await db.SaveChangesAsync();
-        if (artwork.ImageUrl is not null) await images.DeleteAsync(artwork.ImageUrl);
+        await DeleteImageFiles(artwork.ImageUrl, artwork.ThumbnailUrl);
 
         return NoContent();
     }
@@ -114,8 +126,7 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
         }
 
         await using var stream = file.OpenReadStream();
-        var extension = await ImageFormat.DetectExtensionAsync(stream, cancellationToken);
-        if (extension is null)
+        if (await ImageFormat.DetectExtensionAsync(stream, cancellationToken) is null)
         {
             ModelState.AddModelError(nameof(file), "Yalnızca JPEG, PNG veya WebP görseller yüklenebilir.");
             return ValidationProblem(ModelState);
@@ -124,10 +135,22 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
         var artwork = await db.Artworks.FindAsync([id], cancellationToken);
         if (artwork is null) return NotFound();
 
-        var oldImageUrl = artwork.ImageUrl;
-        artwork.ImageUrl = await images.SaveAsync(stream, extension, cancellationToken);
+        var processed = ImageProcessor.Process(stream);
+        if (processed is null)
+        {
+            ModelState.AddModelError(nameof(file), "Görsel okunamadı ya da çözünürlüğü çok yüksek.");
+            return ValidationProblem(ModelState);
+        }
+
+        var (oldImageUrl, oldThumbnailUrl) = (artwork.ImageUrl, artwork.ThumbnailUrl);
+        await using (processed.Large)
+        await using (processed.Thumbnail)
+        {
+            artwork.ImageUrl = await images.SaveAsync(processed.Large, ".webp", cancellationToken);
+            artwork.ThumbnailUrl = await images.SaveAsync(processed.Thumbnail, ".webp", cancellationToken);
+        }
         await db.SaveChangesAsync(cancellationToken);
-        if (oldImageUrl is not null) await images.DeleteAsync(oldImageUrl);
+        await DeleteImageFiles(oldImageUrl, oldThumbnailUrl);
 
         return await GetDto(id);
     }
@@ -139,12 +162,13 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
         var artwork = await db.Artworks.FindAsync(id);
         if (artwork is null) return NotFound();
 
-        if (artwork.ImageUrl is not null)
+        if (artwork.ImageUrl is not null || artwork.ThumbnailUrl is not null)
         {
-            var imageUrl = artwork.ImageUrl;
+            var (imageUrl, thumbnailUrl) = (artwork.ImageUrl, artwork.ThumbnailUrl);
             artwork.ImageUrl = null;
+            artwork.ThumbnailUrl = null;
             await db.SaveChangesAsync();
-            await images.DeleteAsync(imageUrl);
+            await DeleteImageFiles(imageUrl, thumbnailUrl);
         }
 
         return NoContent();
@@ -152,6 +176,12 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
 
     private static string EscapeLike(string value) =>
         value.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_");
+
+    private async Task DeleteImageFiles(params string?[] urls)
+    {
+        foreach (var url in urls)
+            if (url is not null) await images.DeleteAsync(url);
+    }
 
     private Task<ArtworkDto> GetDto(int id) => db.Artworks.Where(a => a.Id == id).Select(ToDto).FirstAsync();
 
@@ -166,6 +196,7 @@ public class ArtworksController(AppDbContext db, IImageStorage images) : Control
         a.Title,
         a.Description,
         a.ImageUrl,
+        a.ThumbnailUrl,
         a.CreatedAt,
         a.Variants
             .OrderBy(v => v.Type == VariantType.Original ? 0 : 1)

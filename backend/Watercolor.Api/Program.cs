@@ -9,7 +9,9 @@ using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
+using Watercolor.Api.Hubs;
 using Watercolor.Api.Models;
+using Watercolor.Api.Services;
 using Watercolor.Api.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -38,6 +40,8 @@ if (Encoding.UTF8.GetByteCount(jwt.Key) < 32)
 builder.Services.Configure<JwtOptions>(jwtSection);
 builder.Services.AddScoped<TokenService>();
 builder.Services.AddSingleton<IImageStorage, LocalImageStorage>();
+builder.Services.AddScoped<OrderCancellation>();
+builder.Services.AddSignalR();
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -52,6 +56,18 @@ builder.Services
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.Key)),
             NameClaimType = "name",
             RoleClaimType = "role",
+        };
+
+        // WebSocket bağlantısı Authorization başlığı gönderemediği için SignalR token'ı adreste taşır.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) && context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                    context.Token = token;
+                return Task.CompletedTask;
+            },
         };
     });
 
@@ -109,5 +125,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<AdminHub>(AdminHub.Path);
 
 app.Run();

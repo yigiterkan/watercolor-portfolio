@@ -1,5 +1,12 @@
 import { loadSession } from '../auth/storage.ts'
 
+export type PagedResult<T> = {
+  items: T[]
+  totalCount: number
+  page: number
+  pageSize: number
+}
+
 export class ApiError extends Error {
   status: number
   errors: Record<string, string[]>

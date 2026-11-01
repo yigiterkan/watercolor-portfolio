@@ -1,32 +1,49 @@
 # Watercolor Portfolio
 
+<p align="center">
+  <img src="frontend/public/images/showcase/headdress-portrait.jpg" alt="Watercolor portrait of a man wearing a feathered headdress" width="720">
+</p>
+
 A full-stack web shop for selling original watercolor paintings and their prints. Visitors browse the gallery, registered customers order originals or prints in different sizes, and the admin manages artworks, stock and order status.
 
 Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) + EF Core + PostgreSQL** on the backend. The user interface is in Turkish.
 
+## Paintings
+
+<p>
+  <img src="frontend/public/images/showcase/yellow-sails.jpg" alt="Sailboat with yellow sails" width="19%">
+  <img src="frontend/public/images/showcase/sleeping-cat.jpg" alt="Ginger cat sleeping among Christmas ornaments" width="19%">
+  <img src="frontend/public/images/showcase/bay-horse.jpg" alt="Bay horse on a dark background" width="15%">
+  <img src="frontend/public/images/showcase/christmas-bells.jpg" alt="Golden bells with holly" width="38%">
+</p>
+
+## Screenshots
+
 | Gallery | Artwork detail |
 |---|---|
-| ![Gallery with search and filters](docs/screenshots/gallery.png) | ![Artwork detail with original and print options](docs/screenshots/artwork-detail.png) |
+| ![Gallery with search and filters](docs/screenshots/gallery.jpg) | ![Artwork detail with original and print options](docs/screenshots/artwork-detail.jpg) |
 
 | Admin: order management | Mobile |
 |---|---|
-| ![Admin order list with status actions](docs/screenshots/admin-orders.png) | <img src="docs/screenshots/mobile.png" alt="Mobile gallery" width="260"> |
+| ![Admin order list with status actions](docs/screenshots/admin-orders.png) | <img src="docs/screenshots/mobile.jpg" alt="Mobile gallery" width="260"> |
 
-<sub>Screenshots use demo data.</sub>
+<sub>Prices, orders and customers in the screenshots are demo data.</sub>
 
 ## Features
 
 **Visitors**
-- Gallery with search, type filter (originals / prints), "in stock only" and price sorting; filters live in the URL, so a filtered view can be shared
+- Gallery with search, type filter (originals / prints), "in stock only", price sorting and pagination; filters and page live in the URL, so a filtered view can be shared
 - Artwork detail page with all purchase options (the original and prints in different sizes)
 
 **Customers**
 - Register and sign in (JWT)
 - Cart stored in the browser; prices and stock are always re-read from the API
 - Checkout with shipping address, order history and order detail
+- Cancel an order while it is still pending; the stock goes back on sale
 
 **Admin**
-- Order list with status filter and pagination; orders move one step at a time: Pending → Confirmed → Shipped → Delivered
+- Order list with status filter and pagination; orders move one step at a time: Pending → Confirmed → Shipped → Delivered, and can be cancelled before shipping
+- Live notification (SignalR) when a customer places or cancels an order; the order list refreshes by itself
 - Create and edit artworks, upload images, and manage each artwork's purchase options (original and prints) with their own price and stock
 
 ## Technical highlights
@@ -36,7 +53,9 @@ Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) +
 - **Safe stock handling.** Stock is decremented with a single conditional `UPDATE … WHERE Stock >= quantity` inside a transaction, so two customers cannot both buy the last original, and a multi-item order either succeeds completely or not at all.
 - **Order snapshots.** Order items store the title, variant type, size and unit price at the time of purchase, so editing an artwork later does not change past orders.
 - **Authentication and authorization.** ASP.NET Core Identity with JWT bearer tokens and `User` / `Admin` roles. Accounts lock for 15 minutes after 5 failed sign-ins, and the auth endpoints are rate limited per IP.
-- **Image uploads.** File type is detected from the file's magic bytes rather than its name or `Content-Type`; files get random names and are served with `nosniff`. Storage sits behind an `IImageStorage` interface (local disk today, cloud storage later).
+- **Image uploads.** File type is detected from the file's magic bytes rather than its name or `Content-Type`. Each upload is re-encoded with SkiaSharp into a 1600 px WebP and a 640 px thumbnail: phone photos are rotated according to their EXIF orientation, EXIF data such as GPS location is stripped, and oversized images are rejected. Files get random names, are served with `nosniff`, and storage sits behind an `IImageStorage` interface (local disk today, cloud storage later).
+- **Cancellation without double refunds.** The status check and the switch to `Cancelled` happen in one conditional `UPDATE`, so a customer and an admin cancelling at the same moment return the stock only once.
+- **Real-time admin notifications.** An admin-only SignalR hub authenticates with the same JWT (passed as `access_token` for WebSockets); a failed notification never fails the order itself.
 - **REST API design.** Nested resources (`/api/artworks/{id}/variants`), query-string filtering and sorting, pagination on admin orders, and `ProblemDetails` error responses.
 - **Data migration.** Moving from per-artwork prices to variants was done with a hand-written EF Core migration that copies existing data before dropping the old columns.
 
@@ -44,8 +63,8 @@ Built with **React + TypeScript** on the frontend and **ASP.NET Core (.NET 10) +
 
 | Layer | Technologies |
 |---|---|
-| Frontend | React 19, TypeScript, Vite, Material UI, React Router |
-| Backend | ASP.NET Core Web API (.NET 10), Entity Framework Core 10, ASP.NET Core Identity, JWT |
+| Frontend | React 19, TypeScript, Vite, Material UI, React Router, SignalR client |
+| Backend | ASP.NET Core Web API (.NET 10), Entity Framework Core 10, ASP.NET Core Identity, JWT, SignalR, SkiaSharp |
 | Database | PostgreSQL (Npgsql) |
 
 ## Project structure
@@ -58,7 +77,9 @@ backend/
     Data/            DbContext, model configuration, role/admin seeding
     Dtos/            Request and response contracts
     Auth/            JWT token service, roles, rate-limit policy
-    Storage/         Image storage and file type detection
+    Storage/         Image storage, file type detection, resizing
+    Services/        Order cancellation
+    Hubs/            SignalR hub for admin notifications
     Migrations/      EF Core migrations
 frontend/
   src/
@@ -67,7 +88,7 @@ frontend/
     cart/            Cart state
     components/      Shared UI (header, cards, protected route…)
     pages/           Public, customer and admin pages
-docs/screenshots/    Images used in this README
+docs/screenshots/    Screenshots used in this README
 ```
 
 ## Getting started
@@ -127,13 +148,13 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The Vite dev server proxies `/api` and `/uploads` to the backend.
+Open `http://localhost:5173`. The Vite dev server proxies `/api`, `/uploads` and the `/hubs` WebSocket to the backend.
 
 ## API overview
 
 | Method | Endpoint | Access |
 |---|---|---|
-| `GET` | `/api/artworks?search=&type=&inStock=&sort=` | Public |
+| `GET` | `/api/artworks?search=&type=&inStock=&sort=&page=&pageSize=` | Public |
 | `GET` | `/api/artworks/{id}` | Public |
 | `POST` `PUT` `DELETE` | `/api/artworks`, `/api/artworks/{id}` | Admin |
 | `POST` `DELETE` | `/api/artworks/{id}/image` | Admin |
@@ -142,15 +163,14 @@ Open `http://localhost:5173`. The Vite dev server proxies `/api` and `/uploads` 
 | `GET` | `/api/auth/me` | Signed in |
 | `GET` `POST` | `/api/orders` | Signed in (own orders) |
 | `GET` | `/api/orders/{id}` | Owner or admin |
+| `POST` | `/api/orders/{id}/cancel` | Owner (pending orders only) |
 | `GET` | `/api/admin/orders?status=&page=&pageSize=` | Admin |
-| `PATCH` | `/api/admin/orders/{id}/status` | Admin |
+| `PATCH` | `/api/admin/orders/{id}/status` | Admin (including `Cancelled`) |
+| WebSocket | `/hubs/admin` (`OrderCreated`, `OrderCancelled`) | Admin |
 
 ## Roadmap
 
 - Online payment
-- Order cancellation that returns stock
-- Pagination for the public gallery
-- Image resizing and thumbnails
 - Refresh tokens
-- Admin notification on new orders (SignalR or email)
+- Email notifications to customers
 - Deployment with HTTPS

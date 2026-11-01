@@ -61,7 +61,7 @@ function ArtworkInfo({ artwork }: { artwork: Artwork }) {
     <Grid container spacing={4}>
       <Grid size={{ xs: 12, md: 7 }}>
         <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
-          <ArtworkImage artwork={artwork} fit="contain" />
+          <ArtworkImage artwork={artwork} fit="contain" size="large" />
         </Paper>
       </Grid>
       <Grid size={{ xs: 12, md: 5 }}>

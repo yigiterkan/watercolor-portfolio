@@ -6,13 +6,14 @@ using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
 using Watercolor.Api.Dtos;
 using Watercolor.Api.Models;
+using Watercolor.Api.Services;
 
 namespace Watercolor.Api.Controllers;
 
 [ApiController]
 [Authorize(Roles = Roles.Admin)]
 [Route("api/admin/orders")]
-public class AdminOrdersController(AppDbContext db) : ControllerBase
+public class AdminOrdersController(AppDbContext db, OrderCancellation cancellation) : ControllerBase
 {
     private const int MaxPageSize = 100;
 
@@ -51,8 +52,16 @@ public class AdminOrdersController(AppDbContext db) : ControllerBase
                 statusCode: StatusCodes.Status409Conflict,
                 title: $"Sipariş '{order.Status}' durumundan '{next}' durumuna geçirilemez.");
 
-        order.Status = next;
-        await db.SaveChangesAsync();
+        if (next == OrderStatus.Cancelled)
+        {
+            if (!await cancellation.TryCancelAsync(id, OrderStatus.Pending, OrderStatus.Confirmed))
+                return Problem(statusCode: StatusCodes.Status409Conflict, title: "Sipariş bu arada güncellenmiş.");
+        }
+        else
+        {
+            order.Status = next;
+            await db.SaveChangesAsync();
+        }
 
         return await db.Orders.Where(o => o.Id == id).Select(ToDto).FirstAsync();
     }
@@ -71,7 +80,7 @@ public class AdminOrdersController(AppDbContext db) : ControllerBase
                 i.VariantId,
                 i.Variant.ArtworkId,
                 i.ArtworkTitle,
-                i.Variant.Artwork.ImageUrl,
+                i.Variant.Artwork.ThumbnailUrl ?? i.Variant.Artwork.ImageUrl,
                 i.VariantType,
                 i.WidthCm,
                 i.HeightCm,

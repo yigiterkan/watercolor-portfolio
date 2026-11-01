@@ -22,6 +22,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
             artwork.Property(a => a.Title).HasMaxLength(200);
             artwork.Property(a => a.Description).HasMaxLength(2000);
             artwork.Property(a => a.ImageUrl).HasMaxLength(500);
+            artwork.Property(a => a.ThumbnailUrl).HasMaxLength(500);
         });
 
         modelBuilder.Entity<ArtworkVariant>(variant =>

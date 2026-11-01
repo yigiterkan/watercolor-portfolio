@@ -1,18 +1,22 @@
 using System.Linq.Expressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Watercolor.Api.Auth;
 using Watercolor.Api.Data;
 using Watercolor.Api.Dtos;
+using Watercolor.Api.Hubs;
 using Watercolor.Api.Models;
+using Watercolor.Api.Services;
 
 namespace Watercolor.Api.Controllers;
 
 [ApiController]
 [Authorize]
 [Route("api/[controller]")]
-public class OrdersController(AppDbContext db) : ControllerBase
+public class OrdersController(AppDbContext db, OrderCancellation cancellation, IHubContext<AdminHub> adminHub)
+    : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<List<OrderDto>>> GetMine()
@@ -109,8 +113,44 @@ public class OrdersController(AppDbContext db) : ControllerBase
         await db.SaveChangesAsync();
         await transaction.CommitAsync();
 
+        await NotifyAdmins("OrderCreated", order);
+
         var dto = await db.Orders.Where(o => o.Id == order.Id).Select(ToDto).FirstAsync();
         return CreatedAtAction(nameof(GetById), new { id = order.Id }, dto);
+    }
+
+    // Müşteri yalnızca henüz onaylanmamış siparişini iptal edebilir.
+    [HttpPost("{id:int}/cancel")]
+    public async Task<ActionResult<OrderDto>> Cancel(int id)
+    {
+        var userId = User.GetUserId();
+        var order = await db.Orders.AsNoTracking().FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
+        if (order is null) return NotFound();
+
+        if (!await cancellation.TryCancelAsync(id, OrderStatus.Pending))
+            return Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Bu sipariş artık iptal edilemez. Onaylanmış siparişler için bizimle iletişime geçin.");
+
+        await NotifyAdmins("OrderCancelled", order);
+
+        return await db.Orders.Where(o => o.Id == id).Select(ToDto).FirstAsync();
+    }
+
+    // Bildirim gönderilemezse sipariş yine de geçerli; hata kullanıcıya yansımasın.
+    private async Task NotifyAdmins(string method, Order order)
+    {
+        try
+        {
+            var itemCount = await db.OrderItems.Where(i => i.OrderId == order.Id).SumAsync(i => i.Quantity);
+            var notification = new OrderNotification(order.Id, User.Identity?.Name ?? "", order.TotalPrice, itemCount);
+            await adminHub.Clients.All.SendAsync(method, notification);
+        }
+        catch (Exception ex)
+        {
+            HttpContext.RequestServices.GetRequiredService<ILogger<OrdersController>>()
+                .LogWarning(ex, "Admin bildirimi gönderilemedi (sipariş {OrderId})", order.Id);
+        }
     }
 
     private static string Describe(ArtworkVariant v) =>
@@ -128,7 +168,7 @@ public class OrdersController(AppDbContext db) : ControllerBase
                 i.VariantId,
                 i.Variant.ArtworkId,
                 i.ArtworkTitle,
-                i.Variant.Artwork.ImageUrl,
+                i.Variant.Artwork.ThumbnailUrl ?? i.Variant.Artwork.ImageUrl,
                 i.VariantType,
                 i.WidthCm,
                 i.HeightCm,

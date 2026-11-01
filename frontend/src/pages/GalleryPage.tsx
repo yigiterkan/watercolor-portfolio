@@ -9,6 +9,7 @@ import Grid from '@mui/material/Grid'
 import InputAdornment from '@mui/material/InputAdornment'
 import LinearProgress from '@mui/material/LinearProgress'
 import MenuItem from '@mui/material/MenuItem'
+import Pagination from '@mui/material/Pagination'
 import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import ToggleButton from '@mui/material/ToggleButton'
@@ -16,8 +17,12 @@ import ToggleButtonGroup from '@mui/material/ToggleButtonGroup'
 import Typography from '@mui/material/Typography'
 import { useSearchParams } from 'react-router'
 import { getArtworks, type Artwork, type ArtworkSort, type VariantType } from '../api/artworks.ts'
+import type { PagedResult } from '../api/client.ts'
+import ShowcaseHero from '../components/ShowcaseHero.tsx'
 import ArtworkCard from '../components/ArtworkCard.tsx'
 import Loading from '../components/Loading.tsx'
+
+const PAGE_SIZE = 12
 
 const SORT_LABELS: Record<ArtworkSort, string> = {
   Newest: 'En yeni',
@@ -55,9 +60,11 @@ function GalleryPage() {
   const type = parseType(searchParams.get('type'))
   const inStock = searchParams.get('inStock') === '1'
   const sort = parseSort(searchParams.get('sort'))
+  const page = Math.max(1, Number.parseInt(searchParams.get('page') ?? '1', 10) || 1)
   const hasFilters = search !== '' || type !== null || inStock || sort !== 'Newest'
 
-  const [artworks, setArtworks] = useState<Artwork[] | null>(null)
+  const [result, setResult] = useState<PagedResult<Artwork> | null>(null)
+  const artworks = result?.items ?? null
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
 
@@ -72,6 +79,8 @@ function GalleryPage() {
           if (value) next.set(key, value)
           else next.delete(key)
         }
+        // Filtre değişince ilk sayfaya dönülür.
+        if (!('page' in changes)) next.delete('page')
         return next
       },
       { replace: true },
@@ -89,10 +98,10 @@ function GalleryPage() {
     let cancelled = false
     setLoading(true)
 
-    getArtworks({ search, type: type ?? undefined, inStock, sort })
-      .then((result) => {
+    getArtworks({ search, type: type ?? undefined, inStock, sort, page, pageSize: PAGE_SIZE })
+      .then((data) => {
         if (cancelled) return
-        setArtworks(result)
+        setResult(data)
         setError(false)
       })
       .catch(() => {
@@ -105,7 +114,7 @@ function GalleryPage() {
     return () => {
       cancelled = true
     }
-  }, [search, type, inStock, sort])
+  }, [search, type, inStock, sort, page])
 
   const heading = HEADINGS[type ?? 'all']
 
@@ -119,6 +128,8 @@ function GalleryPage() {
           {heading.intro}
         </Typography>
       </Box>
+
+      {!hasFilters && page === 1 && <ShowcaseHero />}
 
       <Stack
         direction={{ xs: 'column', md: 'row' }}
@@ -208,7 +219,7 @@ function GalleryPage() {
       ) : (
         <>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }} role="status">
-            {artworks.length} eser
+            {result!.totalCount} eser
           </Typography>
           <Grid container spacing={1.5} sx={{ opacity: loading ? 0.6 : 1, transition: 'opacity 150ms' }}>
             {artworks.map((artwork) => (
@@ -217,6 +228,18 @@ function GalleryPage() {
               </Grid>
             ))}
           </Grid>
+          {result!.totalCount > PAGE_SIZE && (
+            <Pagination
+              count={Math.ceil(result!.totalCount / PAGE_SIZE)}
+              page={page}
+              onChange={(_, value) => {
+                updateParams({ page: value > 1 ? String(value) : null })
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }}
+              shape="rounded"
+              sx={{ mt: 4, display: 'flex', justifyContent: 'center' }}
+            />
+          )}
         </>
       )}
     </>

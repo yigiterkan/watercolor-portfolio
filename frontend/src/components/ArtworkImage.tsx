@@ -6,10 +6,13 @@ import { isSoldOut } from '../utils/variant.ts'
 type ArtworkImageProps = {
   artwork: Artwork
   fit?: 'cover' | 'contain'
+  size?: 'thumbnail' | 'large'
 }
 
-function ArtworkImage({ artwork, fit = 'cover' }: ArtworkImageProps) {
-  if (!artwork.imageUrl) {
+function ArtworkImage({ artwork, fit = 'cover', size = 'thumbnail' }: ArtworkImageProps) {
+  const src = size === 'thumbnail' ? (artwork.thumbnailUrl ?? artwork.imageUrl) : artwork.imageUrl
+
+  if (!src) {
     return (
       <Box
         sx={{
@@ -29,8 +32,9 @@ function ArtworkImage({ artwork, fit = 'cover' }: ArtworkImageProps) {
   return (
     <Box
       component="img"
-      src={artwork.imageUrl}
+      src={src}
       alt={artwork.title}
+      loading={size === 'thumbnail' ? 'lazy' : undefined}
       sx={{
         display: 'block',
         width: '100%',

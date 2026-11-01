@@ -2,13 +2,19 @@ import { useEffect, useState } from 'react'
 import ArrowBackIcon from '@mui/icons-material/ArrowBack'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
+import Dialog from '@mui/material/Dialog'
+import DialogActions from '@mui/material/DialogActions'
+import DialogContent from '@mui/material/DialogContent'
+import DialogContentText from '@mui/material/DialogContentText'
+import DialogTitle from '@mui/material/DialogTitle'
 import Divider from '@mui/material/Divider'
 import MuiLink from '@mui/material/Link'
 import Paper from '@mui/material/Paper'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
 import { Link, useLocation, useNavigate, useParams } from 'react-router'
-import { getOrder, type Order } from '../api/orders.ts'
+import { ApiError } from '../api/client.ts'
+import { cancelOrder, getOrder, type Order } from '../api/orders.ts'
 import Loading from '../components/Loading.tsx'
 import OrderStatusChip from '../components/OrderStatusChip.tsx'
 import { formatDate, formatPrice } from '../utils/format.ts'
@@ -29,6 +35,9 @@ function OrderDetail({ id }: { id: number }) {
   const [state, setState] = useState<State>(
     Number.isInteger(id) ? { status: 'loading' } : { status: 'notFound' },
   )
+  const [confirmCancel, setConfirmCancel] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelResult, setCancelResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   // "Siparişiniz alındı" mesajı bir kez gösterilsin; sayfa yenilenince tekrar çıkmasın.
   useEffect(() => {
@@ -51,9 +60,25 @@ function OrderDetail({ id }: { id: number }) {
 
   const { order } = state
 
+  const handleCancel = async () => {
+    setCancelling(true)
+    try {
+      setState({ status: 'loaded', order: await cancelOrder(order.id) })
+      setCancelResult({ ok: true, message: 'Siparişiniz iptal edildi.' })
+    } catch (err) {
+      setCancelResult({
+        ok: false,
+        message: err instanceof ApiError && err.status === 409 ? err.message : 'Sipariş iptal edilemedi. Lütfen tekrar deneyin.',
+      })
+    }
+    setCancelling(false)
+    setConfirmCancel(false)
+  }
+
   return (
     <Stack spacing={3} sx={{ maxWidth: 720 }}>
-      {justOrdered && <Alert severity="success">Siparişiniz alındı. Teşekkür ederiz!</Alert>}
+      {justOrdered && !cancelResult && <Alert severity="success">Siparişiniz alındı. Teşekkür ederiz!</Alert>}
+      {cancelResult && <Alert severity={cancelResult.ok ? 'success' : 'error'}>{cancelResult.message}</Alert>}
       <Stack spacing={1} sx={{ alignItems: 'flex-start' }}>
         <Typography variant="h4" component="h1">
           Sipariş #{order.id}
@@ -102,6 +127,27 @@ function OrderDetail({ id }: { id: number }) {
         </Typography>
         <Typography sx={{ whiteSpace: 'pre-line', overflowWrap: 'anywhere' }}>{order.shippingAddress}</Typography>
       </Stack>
+      {order.status === 'Pending' && (
+        <Stack direction="row" sx={{ justifyContent: 'flex-end' }}>
+          <Button color="error" variant="outlined" onClick={() => setConfirmCancel(true)}>
+            Siparişi iptal et
+          </Button>
+        </Stack>
+      )}
+      <Dialog open={confirmCancel} onClose={() => !cancelling && setConfirmCancel(false)}>
+        <DialogTitle>Sipariş iptal edilsin mi?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>Sipariş #{order.id} iptal edilecek. Bu işlem geri alınamaz.</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmCancel(false)} disabled={cancelling}>
+            Vazgeç
+          </Button>
+          <Button onClick={handleCancel} color="error" variant="contained" disabled={cancelling}>
+            {cancelling ? 'İptal ediliyor…' : 'Siparişi iptal et'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   )
 }

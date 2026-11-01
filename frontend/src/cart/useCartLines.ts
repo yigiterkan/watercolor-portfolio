@@ -6,14 +6,17 @@ export type CartLine = { artwork: Artwork; variant: Variant; quantity: number }
 
 export function useCartLines() {
   const { items, remove } = useCart()
-  const [artworks, setArtworks] = useState<Artwork[] | null>(null)
+  // Yalnızca açılıştaki sepet içeriği sorgulanır; sonradan yalnızca adet değişir ya da kalem silinir.
+  const [initialIds] = useState(() => items.map((item) => item.variantId))
+  const [artworks, setArtworks] = useState<Artwork[] | null>(initialIds.length === 0 ? [] : null)
   const [error, setError] = useState(false)
 
   useEffect(() => {
-    getArtworks()
-      .then(setArtworks)
+    if (initialIds.length === 0) return
+    getArtworks({ variantIds: initialIds, pageSize: 100 })
+      .then((result) => setArtworks(result.items))
       .catch(() => setError(true))
-  }, [])
+  }, [initialIds])
 
   const variantsById = useMemo(() => {
     const map = new Map<number, { artwork: Artwork; variant: Variant }>()

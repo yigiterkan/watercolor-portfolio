@@ -7,6 +7,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:5216',
       '/uploads': 'http://localhost:5216',
+      '/hubs': { target: 'http://localhost:5216', ws: true },
     },
   },
 })
